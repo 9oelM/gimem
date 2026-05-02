@@ -12,12 +12,17 @@ origin: local
 
 ## Setup
 
-### Build
+### Install
 
 ```bash
-# from repo root
-cargo build --release
-# binary lands at: target/release/gimem
+cargo install --git https://github.com/9oelM/gimem --branch main memory-store --bin gimem
+```
+
+Or clone and build locally:
+
+```bash
+git clone https://github.com/9oelM/gimem
+cargo install --path gimem/memory-store --bin gimem
 ```
 
 ### Required Environment Variables

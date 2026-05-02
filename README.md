@@ -44,7 +44,7 @@ memory-store/           Rust library crate
 
 ```toml
 [dependencies]
-memory-store = { git = "https://github.com/9oelM/gimem" }
+memory-store = { git = "https://github.com/9oelM/gimem", branch = "main" }
 tokio = { version = "1", features = ["full"] }
 ```
 
@@ -109,6 +109,12 @@ let mem = MemoryManager::new("owner/repo", "ghp_...", Some(summarize));
 ## Quickstart: CLI
 
 ### Install
+
+```bash
+cargo install --git https://github.com/9oelM/gimem --branch main memory-store --bin gimem
+```
+
+Or clone and build locally:
 
 ```bash
 git clone https://github.com/9oelM/gimem
