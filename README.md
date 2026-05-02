@@ -2,6 +2,17 @@
 
 A GitHub Issues-backed memory system for AI agents. Each memory is a GitHub Issue. Retrieval uses GitHub's hybrid search API. No external database, no vector store, no infrastructure to run.
 
+## Install
+
+```bash
+# CLI binary
+cargo install --git https://github.com/9oelM/gimem --branch main memory-store --bin gimem
+
+# Claude Code plugin
+claude plugin marketplace add 9oelM/gimem
+claude plugin install gimem@gimem
+```
+
 ## Why GitHub Issues
 
 - **Semantic search** -- GitHub's hybrid search surfaces memories by meaning, not just keywords.
