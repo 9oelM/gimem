@@ -9,13 +9,14 @@
   "plugins": [
     {
       "name": "gimem",
-      "source": "./",
       "description": "Store and retrieve agent memories as GitHub Issues with semantic search. Supports episodic, semantic, procedural, and working memory types with automatic dedup and LLM extraction.",
       "version": "0.1.0",
       "author": {
         "name": "9oelM",
         "url": "https://github.com/9oelM"
       },
+      "source": "./",
+      "category": "workflow",
       "homepage": "https://github.com/9oelM/gimem",
       "repository": "https://github.com/9oelM/gimem",
       "license": "MIT",
@@ -26,14 +27,12 @@
         "semantic-search",
         "gimem"
       ],
-      "category": "workflow",
       "tags": [
         "memory",
         "agent-memory",
         "github-issues",
         "semantic-search"
-      ],
-      "strict": false
+      ]
     }
   ]
 }
