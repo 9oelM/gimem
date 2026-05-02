@@ -1,0 +1,77 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: -D warnings
+
+jobs:
+  check:
+    name: Check, Fmt, Clippy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: memory-store
+
+      - name: cargo fmt
+        run: cargo fmt --check
+        working-directory: memory-store
+
+      - name: cargo clippy
+        run: cargo clippy --all-targets --all-features
+        working-directory: memory-store
+
+  test:
+    name: Unit Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: memory-store
+
+      - name: cargo test
+        run: cargo test --lib
+        working-directory: memory-store
+
+  build-example:
+    name: Build Example
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: memory-store
+
+      - name: cargo build --example basic
+        run: cargo build --example basic
+        working-directory: memory-store
+
+  integration:
+    name: Integration Tests
+    runs-on: ubuntu-latest
+    needs: [check, test]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: memory-store
+
+      - name: cargo test --test integration
+        env:
+          GITHUB_TOKEN: ${{ secrets.MEMORY_GITHUB_TOKEN }}
+          MEMORY_TEST_REPO: ${{ secrets.MEMORY_TEST_REPO }}
+        run: cargo test --test integration
+        working-directory: memory-store
