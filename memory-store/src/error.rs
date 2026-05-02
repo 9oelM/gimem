@@ -61,7 +61,9 @@ mod tests {
 
     #[test]
     fn rate_limit_display() {
-        let err = MemoryError::RateLimit { retry_after_secs: 30 };
+        let err = MemoryError::RateLimit {
+            retry_after_secs: 30,
+        };
         let msg = err.to_string();
         assert!(msg.contains("30"), "seconds missing: {msg}");
     }
@@ -77,12 +79,16 @@ mod tests {
     fn invalid_input_display() {
         let err = MemoryError::InvalidInput("content must not be empty".to_string());
         let msg = err.to_string();
-        assert!(msg.contains("content must not be empty"), "inner message missing: {msg}");
+        assert!(
+            msg.contains("content must not be empty"),
+            "inner message missing: {msg}"
+        );
     }
 
     #[test]
     fn from_serde_json_error() {
-        let json_err: serde_json::Error = serde_json::from_str::<serde_json::Value>("{bad}").unwrap_err();
+        let json_err: serde_json::Error =
+            serde_json::from_str::<serde_json::Value>("{bad}").unwrap_err();
         let mem_err: MemoryError = json_err.into();
         assert!(matches!(mem_err, MemoryError::Parse(_)));
     }
@@ -90,9 +96,13 @@ mod tests {
     #[test]
     fn parse_error_has_source() {
         use std::error::Error;
-        let json_err: serde_json::Error = serde_json::from_str::<serde_json::Value>("{bad}").unwrap_err();
+        let json_err: serde_json::Error =
+            serde_json::from_str::<serde_json::Value>("{bad}").unwrap_err();
         let mem_err: MemoryError = json_err.into();
-        assert!(mem_err.source().is_some(), "Parse error should chain source");
+        assert!(
+            mem_err.source().is_some(),
+            "Parse error should chain source"
+        );
     }
 
     #[test]

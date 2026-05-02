@@ -203,10 +203,19 @@ mod tests {
     fn labels_for_entry_includes_type_tier_status_user() {
         let entry = minimal_entry(MemoryType::Episodic);
         let labels = labels_for_entry(&entry);
-        assert!(labels.contains(&TYPE_EPISODIC.to_owned()), "missing type label");
+        assert!(
+            labels.contains(&TYPE_EPISODIC.to_owned()),
+            "missing type label"
+        );
         assert!(labels.contains(&TIER_COLD.to_owned()), "missing tier label");
-        assert!(labels.contains(&STATUS_ACTIVE.to_owned()), "missing status label");
-        assert!(labels.contains(&"user:alice".to_owned()), "missing user label");
+        assert!(
+            labels.contains(&STATUS_ACTIVE.to_owned()),
+            "missing status label"
+        );
+        assert!(
+            labels.contains(&"user:alice".to_owned()),
+            "missing user label"
+        );
     }
 
     #[test]
@@ -214,7 +223,10 @@ mod tests {
         let mut entry = minimal_entry(MemoryType::Semantic);
         entry.agent_id = Some("agent_01".to_owned());
         let labels = labels_for_entry(&entry);
-        assert!(labels.contains(&"agent:agent_01".to_owned()), "missing agent label");
+        assert!(
+            labels.contains(&"agent:agent_01".to_owned()),
+            "missing agent label"
+        );
     }
 
     #[test]
@@ -223,7 +235,10 @@ mod tests {
         assert!(entry.agent_id.is_none());
         let labels = labels_for_entry(&entry);
         let has_agent = labels.iter().any(|l| l.starts_with("agent:"));
-        assert!(!has_agent, "should not have agent label when agent_id is None");
+        assert!(
+            !has_agent,
+            "should not have agent label when agent_id is None"
+        );
     }
 
     // --- BOOTSTRAP_LABELS ---

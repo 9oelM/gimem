@@ -18,18 +18,20 @@
 //! }
 //! ```
 
-pub mod error;
-pub mod models;
-pub mod labels;
-pub mod schema;
-pub mod store;
-pub mod search;
 pub mod consolidation;
+pub mod error;
+pub mod labels;
 pub mod manager;
+pub mod models;
+pub mod schema;
+pub mod search;
+pub mod store;
 
+pub use consolidation::{
+    ConsolidationConfig, ConsolidationEngine, ConsolidationStats, EvictionStats, SummarizeFn,
+};
 pub use error::{MemoryError, Result};
-pub use models::{MemoryEntry, MemoryEntryBuilder, MemoryType, MemoryTier, MemoryPatch};
-pub use store::MemoryStore;
-pub use search::{SearchQuery, SearchResult};
-pub use consolidation::{ConsolidationConfig, ConsolidationEngine, ConsolidationStats, EvictionStats, SummarizeFn};
 pub use manager::MemoryManager;
+pub use models::{MemoryEntry, MemoryEntryBuilder, MemoryPatch, MemoryTier, MemoryType};
+pub use search::{SearchQuery, SearchResult};
+pub use store::MemoryStore;

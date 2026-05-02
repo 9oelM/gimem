@@ -295,22 +295,34 @@ impl SearchEngine {
 
         let status = response.status().as_u16();
         if status == 403 || status == 429 {
-            return Err(MemoryError::RateLimit { retry_after_secs: 60 });
+            return Err(MemoryError::RateLimit {
+                retry_after_secs: 60,
+            });
         }
         if !response.status().is_success() {
             let msg = response.text().await.unwrap_or_default();
-            return Err(MemoryError::GithubApi { status, message: msg });
+            return Err(MemoryError::GithubApi {
+                status,
+                message: msg,
+            });
         }
 
         let body: serde_json::Value = response.json().await?;
-        let items = body["items"].as_array().map(|v| v.as_slice()).unwrap_or(&[]);
+        let items = body["items"]
+            .as_array()
+            .map(|v| v.as_slice())
+            .unwrap_or(&[]);
         let parsed = Self::parse_search_items(items);
 
         let mut results: Vec<SearchResult> = parsed
             .into_iter()
             .map(|(entry, gh_score)| {
                 let score = Self::local_score(&entry, gh_score);
-                SearchResult { entry, score, gh_score }
+                SearchResult {
+                    entry,
+                    score,
+                    gh_score,
+                }
             })
             .collect();
 
@@ -365,8 +377,18 @@ impl SearchEngine {
 
     /// Builds a stable cache key from all query fields.
     fn cache_key(q: &SearchQuery) -> String {
-        let types = q.memory_types.iter().map(|t| t.to_string()).collect::<Vec<_>>().join(",");
-        let tiers = q.tiers.iter().map(|t| t.to_string()).collect::<Vec<_>>().join(",");
+        let types = q
+            .memory_types
+            .iter()
+            .map(|t| t.to_string())
+            .collect::<Vec<_>>()
+            .join(",");
+        let tiers = q
+            .tiers
+            .iter()
+            .map(|t| t.to_string())
+            .collect::<Vec<_>>()
+            .join(",");
         format!(
             "{}|{}|{}|{}|{}|{}",
             q.query,
@@ -390,10 +412,12 @@ impl SearchEngine {
                 let gh_score = item["score"].as_f64().unwrap_or(0.0) as f32;
                 let issue_number = item["number"].as_u64();
 
-                crate::schema::parse_body(title, body).ok().map(|mut entry| {
-                    entry.issue_number = issue_number;
-                    (entry, gh_score)
-                })
+                crate::schema::parse_body(title, body)
+                    .ok()
+                    .map(|mut entry| {
+                        entry.issue_number = issue_number;
+                        (entry, gh_score)
+                    })
             })
             .collect()
     }
@@ -440,7 +464,10 @@ mod tests {
         assert!(!bucket.try_acquire());
         // 10/60 ≈ 0.167 tokens/sec → 7s yields ~1.17 tokens
         std::thread::sleep(Duration::from_secs(7));
-        assert!(bucket.try_acquire(), "should have refilled at least one token after 7s");
+        assert!(
+            bucket.try_acquire(),
+            "should have refilled at least one token after 7s"
+        );
     }
 
     #[test]
@@ -476,35 +503,50 @@ mod tests {
     fn build_gh_query_includes_state_open_by_default() {
         let q = SearchQuery::default();
         let result = SearchEngine::build_gh_query(&q, "owner/repo");
-        assert!(result.contains("state:open"), "missing state:open: {result}");
+        assert!(
+            result.contains("state:open"),
+            "missing state:open: {result}"
+        );
     }
 
     #[test]
     fn build_gh_query_omits_state_open_when_include_archived() {
         let q = SearchQuery::default().with_archived(true);
         let result = SearchEngine::build_gh_query(&q, "owner/repo");
-        assert!(!result.contains("state:open"), "should omit state:open: {result}");
+        assert!(
+            !result.contains("state:open"),
+            "should omit state:open: {result}"
+        );
     }
 
     #[test]
     fn build_gh_query_with_user_id_includes_label() {
         let q = SearchQuery::default().with_user("alice");
         let result = SearchEngine::build_gh_query(&q, "owner/repo");
-        assert!(result.contains("label:user:alice"), "missing label:user:alice: {result}");
+        assert!(
+            result.contains("label:user:alice"),
+            "missing label:user:alice: {result}"
+        );
     }
 
     #[test]
     fn build_gh_query_with_memory_types_includes_type_label() {
         let q = SearchQuery::default().with_memory_types(vec![MemoryType::Semantic]);
         let result = SearchEngine::build_gh_query(&q, "owner/repo");
-        assert!(result.contains("label:type:semantic"), "missing type label: {result}");
+        assert!(
+            result.contains("label:type:semantic"),
+            "missing type label: {result}"
+        );
     }
 
     #[test]
     fn build_gh_query_with_tiers_includes_tier_label() {
         let q = SearchQuery::default().with_tiers(vec![MemoryTier::Cold]);
         let result = SearchEngine::build_gh_query(&q, "owner/repo");
-        assert!(result.contains("label:tier:cold"), "missing tier label: {result}");
+        assert!(
+            result.contains("label:tier:cold"),
+            "missing tier label: {result}"
+        );
     }
 
     #[test]
@@ -513,7 +555,10 @@ mod tests {
             .with_user("alice")
             .with_query("python preferences");
         let result = SearchEngine::build_gh_query(&q, "owner/repo");
-        assert!(result.ends_with("python preferences"), "query text should be last: {result}");
+        assert!(
+            result.ends_with("python preferences"),
+            "query text should be last: {result}"
+        );
     }
 
     // -----------------------------------------------------------------------
@@ -547,7 +592,10 @@ mod tests {
         let entry = make_entry_with_age(0, 0.9);
         let score = SearchEngine::local_score(&entry, 100.0);
         // 0.5×1.0 + 0.3×0.9 + 0.2×1.0 = 0.97
-        assert!(score > 0.9, "expected high score for new+high-importance entry, got {score}");
+        assert!(
+            score > 0.9,
+            "expected high score for new+high-importance entry, got {score}"
+        );
     }
 
     #[test]
@@ -574,6 +622,9 @@ mod tests {
         let entry = make_entry_with_age(0, 0.0);
         let score_100 = SearchEngine::local_score(&entry, 100.0);
         let score_200 = SearchEngine::local_score(&entry, 200.0);
-        assert_eq!(score_100, score_200, "gh_score >100 should normalize same as 100");
+        assert_eq!(
+            score_100, score_200,
+            "gh_score >100 should normalize same as 100"
+        );
     }
 }

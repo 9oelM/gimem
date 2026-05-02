@@ -35,16 +35,12 @@ use crate::{
 
 fn meta_regex() -> &'static Regex {
     static RE: OnceLock<Regex> = OnceLock::new();
-    RE.get_or_init(|| {
-        Regex::new(r"(?s)<!-- MEMORY_META\n(.*?)\n-->").expect("meta regex is valid")
-    })
+    RE.get_or_init(|| Regex::new(r"(?s)<!-- MEMORY_META\n(.*?)\n-->").expect("meta regex is valid"))
 }
 
 fn type_prefix_regex() -> &'static Regex {
     static RE: OnceLock<Regex> = OnceLock::new();
-    RE.get_or_init(|| {
-        Regex::new(r"^\[([a-z]+)\]\s*").expect("type prefix regex is valid")
-    })
+    RE.get_or_init(|| Regex::new(r"^\[([a-z]+)\]\s*").expect("type prefix regex is valid"))
 }
 
 // ---------------------------------------------------------------------------
@@ -223,10 +219,7 @@ fn strip_helper_lines(raw: &str) -> String {
     let mut end = lines.len();
     while end > 0 {
         let line = lines[end - 1].trim();
-        if line.is_empty()
-            || line.starts_with("**Entities:**")
-            || line.starts_with("**Tags:**")
-        {
+        if line.is_empty() || line.starts_with("**Entities:**") || line.starts_with("**Tags:**") {
             end -= 1;
         } else {
             break;
@@ -415,8 +408,14 @@ mod tests {
         let entry = sample_entry();
         let body = format_body(&entry);
 
-        assert!(body.contains("**Entities:** Alice, Python"), "entities line missing");
-        assert!(body.contains("**Tags:** preferences, language"), "tags line missing");
+        assert!(
+            body.contains("**Entities:** Alice, Python"),
+            "entities line missing"
+        );
+        assert!(
+            body.contains("**Tags:** preferences, language"),
+            "tags line missing"
+        );
 
         let caps = meta_regex()
             .captures(&body)

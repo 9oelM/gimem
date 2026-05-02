@@ -125,7 +125,10 @@ impl GitHubIssuesStore {
             .as_str()
             .unwrap_or("unknown error")
             .to_owned();
-        Err(MemoryError::GithubApi { status: status_code, message })
+        Err(MemoryError::GithubApi {
+            status: status_code,
+            message,
+        })
     }
 
     /// Ensure all given label names exist in the repository, creating any that
@@ -229,7 +232,8 @@ impl MemoryStore for GitHubIssuesStore {
         Self::check_response(resp).await?;
 
         // 2. Post an archival comment.
-        self.add_comment(issue_number, &format!("Archived: {reason}")).await?;
+        self.add_comment(issue_number, &format!("Archived: {reason}"))
+            .await?;
         Ok(())
     }
 
@@ -275,14 +279,19 @@ impl MemoryStore for GitHubIssuesStore {
                 .and_then(|e| e["message"].as_str())
                 .unwrap_or("GraphQL error")
                 .to_owned();
-            return Err(MemoryError::GithubApi { status: 200, message: msg });
+            return Err(MemoryError::GithubApi {
+                status: 200,
+                message: msg,
+            });
         }
         Ok(())
     }
 
     async fn add_comment(&self, issue_number: u64, body: &str) -> Result<()> {
-        let url =
-            self.api_url(&format!("/repos/{}/issues/{}/comments", self.repo, issue_number));
+        let url = self.api_url(&format!(
+            "/repos/{}/issues/{}/comments",
+            self.repo, issue_number
+        ));
         let payload = serde_json::json!({ "body": body });
         let resp = self.client.post(&url).json(&payload).send().await?;
         Self::check_response(resp).await?;
@@ -290,8 +299,10 @@ impl MemoryStore for GitHubIssuesStore {
     }
 
     async fn set_labels(&self, issue_number: u64, labels: &[String]) -> Result<()> {
-        let url =
-            self.api_url(&format!("/repos/{}/issues/{}/labels", self.repo, issue_number));
+        let url = self.api_url(&format!(
+            "/repos/{}/issues/{}/labels",
+            self.repo, issue_number
+        ));
         let payload = serde_json::json!({ "labels": labels });
         let resp = self.client.put(&url).json(&payload).send().await?;
         Self::check_response(resp).await?;
@@ -385,9 +396,7 @@ pub mod testutil {
 
         async fn update(&self, entry: &MemoryEntry) -> Result<()> {
             let n = entry.issue_number.ok_or_else(|| {
-                MemoryError::InvalidInput(
-                    "entry has no issue_number; call create first".into(),
-                )
+                MemoryError::InvalidInput("entry has no issue_number; call create first".into())
             })?;
             let mut map = self.entries.lock().await;
             map.insert(n, entry.clone());
@@ -465,7 +474,10 @@ mod tests {
         let mut entry = make_entry();
         assert!(entry.issue_number.is_none());
         store.create(&mut entry).await.unwrap();
-        assert!(entry.issue_number.is_some(), "issue_number should be set after create");
+        assert!(
+            entry.issue_number.is_some(),
+            "issue_number should be set after create"
+        );
     }
 
     #[tokio::test]

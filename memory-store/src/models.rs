@@ -1,7 +1,7 @@
 //! Core domain types for the memory-store library.
 
-use std::str::FromStr;
 use std::fmt;
+use std::str::FromStr;
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -184,10 +184,7 @@ impl MemoryEntry {
         let access_component = (self.access_count as f32 / 10.0).min(1.0);
         let age_component = (1.0 - age_days / 90.0).max(0.0);
 
-        0.4 * self.importance
-            + 0.3 * access_component
-            + 0.2 * age_component
-            + 0.1 * self.confidence
+        0.4 * self.importance + 0.3 * access_component + 0.2 * age_component + 0.1 * self.confidence
     }
 
     /// Create a fluent builder for constructing a [`MemoryEntry`].
@@ -301,7 +298,9 @@ impl MemoryEntryBuilder {
     /// `importance` / `confidence` are outside `[0.0, 1.0]`.
     pub fn build(self) -> Result<MemoryEntry> {
         if self.content.is_empty() {
-            return Err(MemoryError::InvalidInput("content must not be empty".to_string()));
+            return Err(MemoryError::InvalidInput(
+                "content must not be empty".to_string(),
+            ));
         }
         if !(0.0..=1.0).contains(&self.importance) {
             return Err(MemoryError::InvalidInput(format!(
@@ -429,7 +428,10 @@ mod tests {
             .build()
             .unwrap();
         let score = entry.retention_score();
-        assert!(score > 0.6, "expected high score for new important entry, got {score}");
+        assert!(
+            score > 0.6,
+            "expected high score for new important entry, got {score}"
+        );
     }
 
     #[test]
@@ -443,7 +445,10 @@ mod tests {
         entry.created_at = Utc::now() - chrono::Duration::days(200);
         let score = entry.retention_score();
         // 0.4×0.1 + 0.3×0.0 + 0.2×0.0 + 0.1×0.2 = 0.04 + 0.0 + 0.0 + 0.02 = 0.06
-        assert!(score < 0.15, "expected low score for old neglected entry, got {score}");
+        assert!(
+            score < 0.15,
+            "expected low score for old neglected entry, got {score}"
+        );
     }
 
     #[test]
@@ -544,8 +549,14 @@ mod tests {
 
     #[test]
     fn memory_type_from_str_case_insensitive() {
-        assert_eq!("EPISODIC".parse::<MemoryType>().unwrap(), MemoryType::Episodic);
-        assert_eq!("Semantic".parse::<MemoryType>().unwrap(), MemoryType::Semantic);
+        assert_eq!(
+            "EPISODIC".parse::<MemoryType>().unwrap(),
+            MemoryType::Episodic
+        );
+        assert_eq!(
+            "Semantic".parse::<MemoryType>().unwrap(),
+            MemoryType::Semantic
+        );
     }
 
     #[test]

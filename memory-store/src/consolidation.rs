@@ -35,11 +35,8 @@ use crate::store::MemoryStore;
 ///
 /// Async closures are not yet stable in Rust, so the `Box::pin(async move { … })`
 /// pattern is required.
-pub type SummarizeFn = Arc<
-    dyn Fn(Vec<String>) -> Pin<Box<dyn Future<Output = String> + Send>>
-        + Send
-        + Sync,
->;
+pub type SummarizeFn =
+    Arc<dyn Fn(Vec<String>) -> Pin<Box<dyn Future<Output = String> + Send>> + Send + Sync>;
 
 // ---------------------------------------------------------------------------
 // Configuration
@@ -146,7 +143,12 @@ impl ConsolidationEngine {
         summarize_fn: SummarizeFn,
         config: ConsolidationConfig,
     ) -> Self {
-        Self { store, search, summarize_fn, config }
+        Self {
+            store,
+            search,
+            summarize_fn,
+            config,
+        }
     }
 
     /// Consolidates episodic memories for `user_id` into semantic summaries.
@@ -214,7 +216,9 @@ impl ConsolidationEngine {
 
         if !dry_run {
             for (n, score) in &candidates {
-                self.store.archive(*n, &format!("Evicted: score={score:.2}")).await?;
+                self.store
+                    .archive(*n, &format!("Evicted: score={score:.2}"))
+                    .await?;
             }
         }
 
@@ -314,7 +318,9 @@ impl ConsolidationEngine {
             for source in &cluster {
                 if let Some(n) = source.issue_number {
                     self.store.archive(n, &comment).await?;
-                    self.store.set_labels(n, &[STATUS_SUPERSEDED.to_owned()]).await?;
+                    self.store
+                        .set_labels(n, &[STATUS_SUPERSEDED.to_owned()])
+                        .await?;
                 }
             }
 
@@ -381,7 +387,10 @@ mod tests {
         }
 
         async fn archive(&self, issue_number: u64, reason: &str) -> Result<()> {
-            self.archived.lock().unwrap().push((issue_number, reason.to_owned()));
+            self.archived
+                .lock()
+                .unwrap()
+                .push((issue_number, reason.to_owned()));
             Ok(())
         }
 
@@ -391,12 +400,18 @@ mod tests {
         }
 
         async fn add_comment(&self, issue_number: u64, body: &str) -> Result<()> {
-            self.comments.lock().unwrap().push((issue_number, body.to_owned()));
+            self.comments
+                .lock()
+                .unwrap()
+                .push((issue_number, body.to_owned()));
             Ok(())
         }
 
         async fn set_labels(&self, issue_number: u64, labels: &[String]) -> Result<()> {
-            self.labels_set.lock().unwrap().push((issue_number, labels.to_vec()));
+            self.labels_set
+                .lock()
+                .unwrap()
+                .push((issue_number, labels.to_vec()));
             Ok(())
         }
     }
@@ -428,7 +443,11 @@ mod tests {
     }
 
     fn make_search_result(entry: MemoryEntry, score: f32) -> SearchResult {
-        SearchResult { score, gh_score: score, entry }
+        SearchResult {
+            score,
+            gh_score: score,
+            entry,
+        }
     }
 
     fn noop_summarize() -> SummarizeFn {
@@ -459,7 +478,13 @@ mod tests {
             lexical_results: Vec<SearchResult>,
             hybrid_results: Vec<SearchResult>,
         ) -> Self {
-            Self { store, summarize_fn, config, lexical_results, hybrid_results }
+            Self {
+                store,
+                summarize_fn,
+                config,
+                lexical_results,
+                hybrid_results,
+            }
         }
 
         async fn consolidate(&self, user_id: &str) -> Result<ConsolidationStats> {
@@ -517,8 +542,7 @@ mod tests {
             let mut stats = ConsolidationStats::default();
 
             for cluster in clusters {
-                let contents: Vec<String> =
-                    cluster.iter().map(|e| e.content.clone()).collect();
+                let contents: Vec<String> = cluster.iter().map(|e| e.content.clone()).collect();
                 let summary = (self.summarize_fn)(contents).await;
 
                 let max_importance = cluster
@@ -571,7 +595,9 @@ mod tests {
 
             if !dry_run {
                 for (n, score) in &candidates {
-                    self.store.archive(*n, &format!("Evicted: score={score:.2}")).await?;
+                    self.store
+                        .archive(*n, &format!("Evicted: score={score:.2}"))
+                        .await?;
                 }
             }
 
@@ -589,15 +615,17 @@ mod tests {
     #[tokio::test]
     async fn consolidation_below_threshold_returns_zero_stats() {
         let store = Arc::new(MockMemoryStore::default());
-        let config = ConsolidationConfig { episodic_threshold: 5, ..Default::default() };
+        let config = ConsolidationConfig {
+            episodic_threshold: 5,
+            ..Default::default()
+        };
 
         let episodics: Vec<SearchResult> = (1u64..=3)
             .map(|n| make_search_result(make_entry(n, MemoryType::Episodic, 0.5), 1.0))
             .collect();
 
-        let engine = TestConsolidationEngine::new(
-            store, noop_summarize(), config, episodics, vec![],
-        );
+        let engine =
+            TestConsolidationEngine::new(store, noop_summarize(), config, episodics, vec![]);
 
         let stats = engine.consolidate("alice").await.unwrap();
         assert_eq!(stats, ConsolidationStats::default());
@@ -623,12 +651,19 @@ mod tests {
             .collect();
 
         let engine = TestConsolidationEngine::new(
-            store.clone(), noop_summarize(), config, episodics, hybrid,
+            store.clone(),
+            noop_summarize(),
+            config,
+            episodics,
+            hybrid,
         );
 
         let stats = engine.consolidate("alice").await.unwrap();
         assert_eq!(stats.consolidated, 4, "expected 4 consolidated");
-        assert_eq!(stats.promoted, 1, "expected 1 promoted (greedy groups all 4 together)");
+        assert_eq!(
+            stats.promoted, 1,
+            "expected 1 promoted (greedy groups all 4 together)"
+        );
     }
 
     #[tokio::test]
@@ -646,14 +681,22 @@ mod tests {
         let hybrid = episodics.clone();
 
         let engine = TestConsolidationEngine::new(
-            store.clone(), noop_summarize(), config, episodics, hybrid,
+            store.clone(),
+            noop_summarize(),
+            config,
+            episodics,
+            hybrid,
         );
 
         engine.consolidate("alice").await.unwrap();
 
         let entries = store.entries.lock().unwrap();
         for entry in entries.values() {
-            assert_eq!(entry.memory_type, MemoryType::Semantic, "created entry must be Semantic");
+            assert_eq!(
+                entry.memory_type,
+                MemoryType::Semantic,
+                "created entry must be Semantic"
+            );
         }
     }
 
@@ -672,7 +715,11 @@ mod tests {
         let hybrid = episodics.clone();
 
         let engine = TestConsolidationEngine::new(
-            store.clone(), noop_summarize(), config, episodics, hybrid,
+            store.clone(),
+            noop_summarize(),
+            config,
+            episodics,
+            hybrid,
         );
 
         engine.consolidate("alice").await.unwrap();
@@ -698,7 +745,9 @@ mod tests {
         old_entry.created_at = Utc::now() - chrono::Duration::days(200);
 
         let engine = TestConsolidationEngine::new(
-            store.clone(), noop_summarize(), config,
+            store.clone(),
+            noop_summarize(),
+            config,
             vec![make_search_result(old_entry, 1.0)],
             vec![],
         );
@@ -706,7 +755,10 @@ mod tests {
         let stats = engine.evict("alice", false).await.unwrap();
         assert!(stats.candidates >= 1);
         assert_eq!(stats.evicted, stats.candidates);
-        assert!(!store.archived.lock().unwrap().is_empty(), "low-score entry should be archived");
+        assert!(
+            !store.archived.lock().unwrap().is_empty(),
+            "low-score entry should be archived"
+        );
     }
 
     #[tokio::test]
@@ -716,15 +768,23 @@ mod tests {
 
         let entry = make_entry(20, MemoryType::Semantic, 0.9);
         let engine = TestConsolidationEngine::new(
-            store.clone(), noop_summarize(), config,
+            store.clone(),
+            noop_summarize(),
+            config,
             vec![make_search_result(entry, 1.0)],
             vec![],
         );
 
         let stats = engine.evict("alice", false).await.unwrap();
-        assert_eq!(stats.candidates, 0, "high-score entry should not be a candidate");
+        assert_eq!(
+            stats.candidates, 0,
+            "high-score entry should not be a candidate"
+        );
         assert_eq!(stats.evicted, 0);
-        assert!(store.archived.lock().unwrap().is_empty(), "nothing should be archived");
+        assert!(
+            store.archived.lock().unwrap().is_empty(),
+            "nothing should be archived"
+        );
     }
 
     #[tokio::test]
@@ -737,7 +797,9 @@ mod tests {
         old_entry.created_at = Utc::now() - chrono::Duration::days(200);
 
         let engine = TestConsolidationEngine::new(
-            store.clone(), noop_summarize(), config,
+            store.clone(),
+            noop_summarize(),
+            config,
             vec![make_search_result(old_entry, 1.0)],
             vec![],
         );
@@ -745,7 +807,10 @@ mod tests {
         let stats = engine.evict("alice", true).await.unwrap();
         assert!(stats.candidates >= 1, "should count candidates");
         assert_eq!(stats.evicted, 0, "dry_run must not evict");
-        assert!(store.archived.lock().unwrap().is_empty(), "dry_run must not archive anything");
+        assert!(
+            store.archived.lock().unwrap().is_empty(),
+            "dry_run must not archive anything"
+        );
     }
 
     #[test]

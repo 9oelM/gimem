@@ -100,7 +100,9 @@ impl MemoryManager {
     /// Bootstrap the repository by creating all required labels.
     pub async fn bootstrap(&self) -> Result<()> {
         let bootstrap_store = GitHubIssuesStore::new(&self.repo, &self.token);
-        bootstrap_store.ensure_labels(labels::BOOTSTRAP_LABELS).await
+        bootstrap_store
+            .ensure_labels(labels::BOOTSTRAP_LABELS)
+            .await
     }
 
     /// Store a new memory entry and return it with its assigned issue number.
@@ -126,12 +128,7 @@ impl MemoryManager {
     }
 
     /// Recall relevant memories as a formatted context block.
-    pub async fn recall(
-        &self,
-        query: &str,
-        user_id: &str,
-        token_budget: usize,
-    ) -> Result<String> {
+    pub async fn recall(&self, query: &str, user_id: &str, token_budget: usize) -> Result<String> {
         // 1. Hot-tier (cached, 5-min TTL)
         let hot_entries = self.fetch_hot_tier(user_id).await.unwrap_or_default();
 
@@ -150,13 +147,14 @@ impl MemoryManager {
         let hot_ids: std::collections::HashSet<u64> =
             hot_entries.iter().filter_map(|e| e.issue_number).collect();
 
-        let mut combined: Vec<(MemoryEntry, f32)> = hot_entries
-            .iter()
-            .map(|e| (e.clone(), 2.0_f32))
-            .collect();
+        let mut combined: Vec<(MemoryEntry, f32)> =
+            hot_entries.iter().map(|e| (e.clone(), 2.0_f32)).collect();
 
         for sr in &search_results {
-            let is_dup = sr.entry.issue_number.map_or(false, |n| hot_ids.contains(&n));
+            let is_dup = sr
+                .entry
+                .issue_number
+                .map_or(false, |n| hot_ids.contains(&n));
             if !is_dup {
                 combined.push((sr.entry.clone(), sr.score));
             }
@@ -285,7 +283,8 @@ impl MemoryManager {
         let session_id = uuid::Uuid::new_v4().to_string();
         let url = format!("https://api.github.com/repos/{}/milestones", self.repo);
 
-        let resp = self.http_client
+        let resp = self
+            .http_client
             .post(&url)
             .bearer_auth(&self.token)
             .header("Accept", "application/vnd.github+json")
@@ -300,20 +299,21 @@ impl MemoryManager {
         if !resp.status().is_success() {
             let status = resp.status().as_u16();
             let msg = resp.text().await.unwrap_or_default();
-            return Err(MemoryError::GithubApi { status, message: msg });
+            return Err(MemoryError::GithubApi {
+                status,
+                message: msg,
+            });
         }
 
         Ok(session_id)
     }
 
     /// End a session: run consolidation and close the milestone.
-    pub async fn end_session(
-        &self,
-        user_id: &str,
-        session_id: &str,
-    ) -> Result<ConsolidationStats> {
+    pub async fn end_session(&self, user_id: &str, session_id: &str) -> Result<ConsolidationStats> {
         let stats = self.consolidation.consolidate(user_id).await?;
-        self.close_milestone(&format!("sess_{session_id}")).await.ok();
+        self.close_milestone(&format!("sess_{session_id}"))
+            .await
+            .ok();
         Ok(stats)
     }
 
@@ -370,7 +370,8 @@ impl MemoryManager {
 
     async fn close_milestone(&self, title: &str) -> Result<()> {
         let list_url = format!("https://api.github.com/repos/{}/milestones", self.repo);
-        let resp = self.http_client
+        let resp = self
+            .http_client
             .get(&list_url)
             .bearer_auth(&self.token)
             .header("Accept", "application/vnd.github+json")
@@ -512,7 +513,10 @@ mod tests {
             .unwrap();
 
         assert_eq!(entry.memory_type, MemoryType::Semantic);
-        assert!(entry.issue_number.is_some(), "issue_number must be assigned");
+        assert!(
+            entry.issue_number.is_some(),
+            "issue_number must be assigned"
+        );
         assert_eq!(entry.content, "User prefers Rust");
         assert_eq!(entry.user_id.as_deref(), Some("alice"));
     }
@@ -530,8 +534,7 @@ mod tests {
     fn recall_dedup_hot_tier_takes_precedence_over_search() {
         let issue_num = 42u64;
         let hot_entry = make_entry_with_number(issue_num, "hot entry", MemoryType::Working);
-        let search_entry =
-            make_entry_with_number(issue_num, "search entry", MemoryType::Working);
+        let search_entry = make_entry_with_number(issue_num, "search entry", MemoryType::Working);
 
         let hot_entries = vec![hot_entry.clone()];
         let search_results = vec![SearchResult {
@@ -540,16 +543,17 @@ mod tests {
             gh_score: 0.9,
         }];
 
-        let hot_ids: std::collections::HashSet<u64> = hot_entries
-            .iter()
-            .filter_map(|e| e.issue_number)
-            .collect();
+        let hot_ids: std::collections::HashSet<u64> =
+            hot_entries.iter().filter_map(|e| e.issue_number).collect();
 
         let mut combined: Vec<(MemoryEntry, f32)> =
             hot_entries.iter().map(|e| (e.clone(), 2.0_f32)).collect();
 
         for sr in &search_results {
-            let is_dup = sr.entry.issue_number.map_or(false, |n| hot_ids.contains(&n));
+            let is_dup = sr
+                .entry
+                .issue_number
+                .map_or(false, |n| hot_ids.contains(&n));
             if !is_dup {
                 combined.push((sr.entry.clone(), sr.score));
             }
@@ -590,7 +594,14 @@ mod tests {
         let mgr = make_manager(store.clone());
 
         let entry = mgr
-            .remember("to forget", MemoryType::Episodic, "alice", 0.3, vec![], vec![])
+            .remember(
+                "to forget",
+                MemoryType::Episodic,
+                "alice",
+                0.3,
+                vec![],
+                vec![],
+            )
             .await
             .unwrap();
         let n = entry.issue_number.unwrap();
@@ -636,7 +647,10 @@ mod tests {
         let store = Arc::new(MockMemoryStore::new());
         let mgr = make_manager(store.clone());
 
-        let entry = mgr.set_working("current task context", "alice").await.unwrap();
+        let entry = mgr
+            .set_working("current task context", "alice")
+            .await
+            .unwrap();
 
         assert_eq!(entry.memory_type, MemoryType::Working);
         assert!(entry.issue_number.is_some());
