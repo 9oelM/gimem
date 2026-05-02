@@ -337,6 +337,16 @@ impl MemoryEntryBuilder {
     }
 }
 
+/// A candidate memory extracted from a conversation transcript.
+#[derive(Debug, Clone)]
+pub struct ExtractedMemory {
+    pub content: String,
+    pub memory_type: MemoryType,
+    pub importance: f32,
+    pub entities: Vec<String>,
+    pub tags: Vec<String>,
+}
+
 /// A partial update to a [`MemoryEntry`].
 ///
 /// Only `Some` fields are applied; `None` fields are left unchanged.

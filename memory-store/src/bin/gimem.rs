@@ -113,6 +113,20 @@ enum Command {
         #[arg(long)]
         dry_run: bool,
     },
+
+    /// Extract memories from a Claude Code JSONL transcript file.
+    ExtractFromTranscript {
+        /// Path to a Claude Code JSONL transcript file.
+        path: std::path::PathBuf,
+
+        /// Shell command for LLM-based extraction (env: GIMEM_EXTRACTOR).
+        #[arg(long, env = "GIMEM_EXTRACTOR")]
+        extractor_script: Option<String>,
+
+        /// Print what would be stored without actually storing anything.
+        #[arg(long)]
+        dry_run: bool,
+    },
 }
 
 // ---------------------------------------------------------------------------
@@ -301,6 +315,169 @@ async fn run(
                 );
             }
         }
+
+        Command::ExtractFromTranscript {
+            path,
+            extractor_script,
+            dry_run,
+        } => {
+            let user_id = require_user(user)?;
+            let path_str = path.to_string_lossy();
+
+            // When a shell extractor script is provided, parse locally so we
+            // can pipe the formatted text to it.  Otherwise delegate entirely
+            // to `MemoryManager::extract_from_transcript`, which owns the
+            // heuristic logic and dedup.
+            if let Some(script) = extractor_script {
+                let raw = tokio::fs::read_to_string(&path).await.map_err(|e| {
+                    MemoryError::InvalidInput(format!("failed to read transcript {path_str}: {e}"))
+                })?;
+                let turns = parse_transcript(&raw);
+                let formatted: String = turns
+                    .iter()
+                    .map(|(role, text)| format!("{}: {}\n", role.to_uppercase(), text))
+                    .collect();
+                let candidates = run_extractor_script(&script, &formatted).unwrap_or_default();
+
+                let total_candidates = candidates.len();
+                let mut stored: Vec<serde_json::Value> = Vec::new();
+                let mut skipped: usize = 0;
+
+                for candidate in candidates {
+                    let existing = mgr.recall(&candidate.content, &user_id, 500).await?;
+                    if !existing.is_empty() && existing.contains(candidate.content.as_str()) {
+                        if !json {
+                            println!(
+                                "  [{}] Skipped (duplicate): {}",
+                                candidate.memory_type, candidate.content
+                            );
+                        }
+                        skipped += 1;
+                        continue;
+                    }
+                    let memory_type: MemoryType = candidate
+                        .memory_type
+                        .parse()
+                        .unwrap_or(MemoryType::Episodic);
+                    if !json {
+                        println!(
+                            "  [{}] {} (importance: {})",
+                            candidate.memory_type, candidate.content, candidate.importance
+                        );
+                    }
+                    if dry_run {
+                        stored.push(serde_json::json!({
+                            "content": candidate.content,
+                            "memory_type": candidate.memory_type,
+                            "importance": candidate.importance,
+                            "dry_run": true,
+                        }));
+                    } else {
+                        let entry = mgr
+                            .remember(
+                                &candidate.content,
+                                memory_type,
+                                &user_id,
+                                candidate.importance,
+                                vec![],
+                                vec![],
+                            )
+                            .await?;
+                        stored.push(serde_json::json!({
+                            "issue_number": entry.issue_number,
+                            "content": candidate.content,
+                            "memory_type": candidate.memory_type,
+                            "importance": candidate.importance,
+                        }));
+                    }
+                }
+
+                if json {
+                    println!(
+                        "{}",
+                        serde_json::json!({
+                            "stored": stored,
+                            "skipped": skipped,
+                            "total_candidates": total_candidates,
+                            "dry_run": dry_run,
+                        })
+                    );
+                } else {
+                    let action = if dry_run {
+                        "Would extract"
+                    } else {
+                        "Extracted"
+                    };
+                    println!(
+                        "{action} {} memories from transcript.",
+                        total_candidates - skipped
+                    );
+                }
+            } else if dry_run {
+                // Dry-run without a script: show candidates without storing.
+                let raw = tokio::fs::read_to_string(&path).await.map_err(|e| {
+                    MemoryError::InvalidInput(format!("failed to read transcript {path_str}: {e}"))
+                })?;
+                let candidates = heuristic_extract(&parse_transcript(&raw));
+                if json {
+                    let items: Vec<_> = candidates
+                        .iter()
+                        .map(|c| {
+                            serde_json::json!({
+                                "content": c.content,
+                                "memory_type": c.memory_type,
+                                "importance": c.importance,
+                                "dry_run": true,
+                            })
+                        })
+                        .collect();
+                    println!(
+                        "{}",
+                        serde_json::json!({
+                            "stored": items,
+                            "skipped": 0,
+                            "total_candidates": candidates.len(),
+                            "dry_run": true,
+                        })
+                    );
+                } else {
+                    for c in &candidates {
+                        println!(
+                            "  [{}] {} (importance: {})",
+                            c.memory_type, c.content, c.importance
+                        );
+                    }
+                    println!(
+                        "Would extract {} memories from transcript.",
+                        candidates.len()
+                    );
+                }
+            } else {
+                // Normal path: delegate to MemoryManager (heuristics + dedup + store).
+                let entries = mgr.extract_from_transcript(&path_str, &user_id).await?;
+                if json {
+                    let items: Vec<_> = entries
+                        .iter()
+                        .map(|e| {
+                            serde_json::json!({
+                                "issue_number": e.issue_number,
+                                "content": e.content,
+                                "memory_type": e.memory_type.to_string(),
+                            })
+                        })
+                        .collect();
+                    println!(
+                        "{}",
+                        serde_json::json!({ "stored": items, "dry_run": false })
+                    );
+                } else {
+                    for e in &entries {
+                        println!("  [{}] {}", e.memory_type, e.content);
+                    }
+                    println!("Extracted {} memories from transcript.", entries.len());
+                }
+            }
+        }
     }
 
     Ok(())
@@ -368,6 +545,172 @@ fn print_consolidation_stats(
 }
 
 // ---------------------------------------------------------------------------
+// Transcript extraction helpers
+// ---------------------------------------------------------------------------
+
+/// A candidate memory extracted from a transcript.
+struct ExtractCandidate {
+    content: String,
+    memory_type: String,
+    importance: f32,
+}
+
+/// Parse a Claude Code JSONL transcript into `(role, text)` pairs.
+///
+/// Lines with `type` other than `"user"` or `"assistant"` are skipped.
+/// The `content` field may be a string or an array of content blocks.
+fn parse_transcript(raw: &str) -> Vec<(String, String)> {
+    let mut turns = Vec::new();
+
+    for line in raw.lines() {
+        let line = line.trim();
+        if line.is_empty() {
+            continue;
+        }
+
+        let Ok(val): Result<serde_json::Value, _> = serde_json::from_str(line) else {
+            continue;
+        };
+
+        let Some(kind) = val.get("type").and_then(|v| v.as_str()) else {
+            continue;
+        };
+
+        if kind != "user" && kind != "assistant" {
+            continue;
+        }
+
+        let role = kind.to_string();
+
+        let Some(content) = val.get("message").and_then(|m| m.get("content")) else {
+            continue;
+        };
+
+        let text = match content {
+            serde_json::Value::String(s) => s.clone(),
+            serde_json::Value::Array(arr) => arr
+                .iter()
+                .filter_map(|block| {
+                    if block.get("type").and_then(|t| t.as_str()) == Some("text") {
+                        block
+                            .get("text")
+                            .and_then(|t| t.as_str())
+                            .map(str::to_owned)
+                    } else {
+                        None
+                    }
+                })
+                .collect::<Vec<_>>()
+                .join(" "),
+            _ => continue,
+        };
+
+        if !text.is_empty() {
+            turns.push((role, text));
+        }
+    }
+
+    turns
+}
+
+/// Apply heuristic rules to user turns and return extraction candidates.
+fn heuristic_extract(turns: &[(String, String)]) -> Vec<ExtractCandidate> {
+    let mut candidates = Vec::new();
+
+    for (role, text) in turns {
+        if role != "user" {
+            continue;
+        }
+
+        let len = text.len();
+        if len < 15 || text.trim_end().ends_with('?') {
+            continue;
+        }
+
+        let lower = text.to_lowercase();
+
+        let (memory_type, importance): (&str, f32) = if lower.contains("prefer")
+            || lower.contains("always")
+            || lower.contains("like")
+            || lower.contains("want")
+            || lower.contains("love")
+            || lower.contains("never")
+            || lower.contains("don't")
+            || lower.contains("shouldn't")
+            || lower.contains("avoid")
+            || lower.contains("hate")
+        {
+            ("semantic", 0.7)
+        } else if lower.contains("we use")
+            || lower.contains("our stack")
+            || lower.contains("our repo")
+            || lower.contains("our db")
+            || lower.contains("we deploy")
+        {
+            ("semantic", 0.8)
+        } else if lower.contains("to deploy")
+            || lower.contains("to build")
+            || lower.contains("to test")
+            || lower.contains("to run")
+            || lower.contains("steps to")
+        {
+            ("procedural", 0.75)
+        } else if len > 30 {
+            ("episodic", 0.4)
+        } else {
+            continue;
+        };
+
+        candidates.push(ExtractCandidate {
+            content: text.clone(),
+            memory_type: memory_type.to_string(),
+            importance,
+        });
+    }
+
+    candidates
+}
+
+/// Run an extractor script, feeding the formatted conversation on stdin,
+/// and parse the JSON array it writes to stdout.
+fn run_extractor_script(script: &str, text: &str) -> Option<Vec<ExtractCandidate>> {
+    use std::io::Write;
+    use std::process::{Command, Stdio};
+
+    let mut child = Command::new("sh")
+        .args(["-c", script])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+        .ok()?;
+
+    child.stdin.take()?.write_all(text.as_bytes()).ok()?;
+
+    let out = child.wait_with_output().ok()?;
+    let arr: Vec<serde_json::Value> = serde_json::from_slice(&out.stdout).ok()?;
+
+    let candidates = arr
+        .into_iter()
+        .filter_map(|v| {
+            let content = v.get("content")?.as_str()?.to_owned();
+            let memory_type = v
+                .get("type")
+                .and_then(|t| t.as_str())
+                .unwrap_or("episodic")
+                .to_owned();
+            let importance = v.get("importance").and_then(|i| i.as_f64()).unwrap_or(0.5) as f32;
+            Some(ExtractCandidate {
+                content,
+                memory_type,
+                importance,
+            })
+        })
+        .collect();
+
+    Some(candidates)
+}
+
+// ---------------------------------------------------------------------------
 // Unit tests
 // ---------------------------------------------------------------------------
 
@@ -431,5 +774,113 @@ mod tests {
             msg.contains("GIMEM_USER"),
             "error message should mention GIMEM_USER, got: {msg}"
         );
+    }
+
+    // --- parse_transcript ---
+
+    #[test]
+    fn parse_transcript_skips_non_user_assistant_types() {
+        let raw = r#"{"type":"file-history-snapshot","data":{}}"#;
+        assert!(parse_transcript(raw).is_empty());
+    }
+
+    #[test]
+    fn parse_transcript_handles_string_content() {
+        let raw = r#"{"type":"user","message":{"role":"user","content":"hello world"}}"#;
+        let turns = parse_transcript(raw);
+        assert_eq!(turns.len(), 1);
+        assert_eq!(turns[0].0, "user");
+        assert_eq!(turns[0].1, "hello world");
+    }
+
+    #[test]
+    fn parse_transcript_handles_array_content() {
+        let raw = r#"{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"hi there"}]}}"#;
+        let turns = parse_transcript(raw);
+        assert_eq!(turns.len(), 1);
+        assert_eq!(turns[0].0, "assistant");
+        assert_eq!(turns[0].1, "hi there");
+    }
+
+    #[test]
+    fn parse_transcript_skips_non_text_blocks_in_array() {
+        let raw = r#"{"type":"user","message":{"role":"user","content":[{"type":"tool_use","id":"x"},{"type":"text","text":"actual text"}]}}"#;
+        let turns = parse_transcript(raw);
+        assert_eq!(turns.len(), 1);
+        assert_eq!(turns[0].1, "actual text");
+    }
+
+    // --- heuristic_extract ---
+
+    #[test]
+    fn heuristic_extract_skips_short_messages() {
+        let turns = vec![("user".to_string(), "short".to_string())];
+        assert!(heuristic_extract(&turns).is_empty());
+    }
+
+    #[test]
+    fn heuristic_extract_skips_questions() {
+        let turns = vec![(
+            "user".to_string(),
+            "What is the best way to do this?".to_string(),
+        )];
+        assert!(heuristic_extract(&turns).is_empty());
+    }
+
+    #[test]
+    fn heuristic_extract_skips_assistant_turns() {
+        let turns = vec![(
+            "assistant".to_string(),
+            "I always prefer tabs over spaces in my config".to_string(),
+        )];
+        assert!(heuristic_extract(&turns).is_empty());
+    }
+
+    #[test]
+    fn heuristic_extract_detects_semantic_prefer() {
+        let turns = vec![(
+            "user".to_string(),
+            "I prefer tabs over spaces for indentation".to_string(),
+        )];
+        let candidates = heuristic_extract(&turns);
+        assert_eq!(candidates.len(), 1);
+        assert_eq!(candidates[0].memory_type, "semantic");
+        assert!((candidates[0].importance - 0.7).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn heuristic_extract_detects_semantic_team_stack() {
+        let turns = vec![(
+            "user".to_string(),
+            "We use pnpm for package management in our repo".to_string(),
+        )];
+        let candidates = heuristic_extract(&turns);
+        assert_eq!(candidates.len(), 1);
+        assert_eq!(candidates[0].memory_type, "semantic");
+        assert!((candidates[0].importance - 0.8).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn heuristic_extract_detects_procedural_steps() {
+        let turns = vec![(
+            "user".to_string(),
+            "Here are the steps to deploy the service to production".to_string(),
+        )];
+        let candidates = heuristic_extract(&turns);
+        assert_eq!(candidates.len(), 1);
+        assert_eq!(candidates[0].memory_type, "procedural");
+        assert!((candidates[0].importance - 0.75).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn heuristic_extract_detects_episodic_long_message() {
+        let turns = vec![(
+            "user".to_string(),
+            "This morning we had a long discussion about the architecture".to_string(),
+        )];
+        let candidates = heuristic_extract(&turns);
+        assert_eq!(candidates.len(), 1);
+        assert_eq!(candidates[0].memory_type, "episodic");
+        assert!((candidates[0].importance - 0.4).abs() < f32::EPSILON);
     }
 }
