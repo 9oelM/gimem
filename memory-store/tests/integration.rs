@@ -9,6 +9,11 @@
 //! If either variable is absent, every test exits early with a `SKIP` message.
 //! All test-created issues are tagged with the `test:cleanup` label.
 //! A [`CleanupGuard`] struct archives them on drop.
+//!
+//! Before the first test runs, [`run_global_setup`] closes every open issue in
+//! the test repository so each run starts from a clean slate.
+
+use std::sync::OnceLock;
 
 use memory_store::{MemoryManager, MemoryType};
 
@@ -21,6 +26,72 @@ fn require_env() -> Option<(String, String)> {
     let token = std::env::var("GITHUB_TOKEN").ok()?;
     let repo = std::env::var("MEMORY_TEST_REPO").ok()?;
     Some((token, repo))
+}
+
+// ---------------------------------------------------------------------------
+// Global setup: close all open issues before the first test
+// ---------------------------------------------------------------------------
+
+static GLOBAL_SETUP: OnceLock<()> = OnceLock::new();
+
+/// Ensures all open issues in the test repository are closed exactly once
+/// per test binary invocation, regardless of how many tests run in parallel.
+fn run_global_setup(token: &str, repo: &str) {
+    GLOBAL_SETUP.get_or_init(|| {
+        let token = token.to_owned();
+        let repo = repo.to_owned();
+        // Spawn a fresh OS thread so we can safely create a new Tokio runtime
+        // without conflicting with the #[tokio::test] runtime.
+        let handle = std::thread::spawn(move || {
+            if let Ok(rt) = tokio::runtime::Runtime::new() {
+                rt.block_on(close_all_open_issues(&token, &repo));
+            }
+        });
+        let _ = handle.join();
+    });
+}
+
+/// Closes every open issue in `repo` by paginating through the issues API.
+async fn close_all_open_issues(token: &str, repo: &str) {
+    let client = test_client();
+    let mut page = 1u32;
+    loop {
+        let url = format!(
+            "https://api.github.com/repos/{repo}/issues?state=open&per_page=100&page={page}"
+        );
+        let resp = client
+            .get(&url)
+            .bearer_auth(token)
+            .header("Accept", "application/vnd.github+json")
+            .header("X-GitHub-Api-Version", "2026-03-10")
+            .send()
+            .await;
+
+        let issues: Vec<serde_json::Value> = match resp {
+            Ok(r) => r.json().await.unwrap_or_default(),
+            Err(_) => break,
+        };
+
+        if issues.is_empty() {
+            break;
+        }
+
+        for issue in &issues {
+            if let Some(n) = issue["number"].as_u64() {
+                let patch_url = format!("https://api.github.com/repos/{repo}/issues/{n}");
+                let _ = client
+                    .patch(&patch_url)
+                    .bearer_auth(token)
+                    .header("Accept", "application/vnd.github+json")
+                    .header("X-GitHub-Api-Version", "2026-03-10")
+                    .json(&serde_json::json!({ "state": "closed" }))
+                    .send()
+                    .await;
+            }
+        }
+
+        page += 1;
+    }
 }
 
 /// Builds a shared `reqwest::Client` with the standard test User-Agent.
@@ -147,6 +218,7 @@ async fn test_bootstrap_idempotent() {
             return;
         }
     };
+    run_global_setup(&token, &repo);
 
     let mem = MemoryManager::new(&repo, &token, None);
     mem.bootstrap().await.expect("first bootstrap failed");
@@ -170,6 +242,7 @@ async fn test_remember_and_recall() {
             return;
         }
     };
+    run_global_setup(&token, &repo);
 
     ensure_cleanup_label(&token, &repo).await;
     let mem = MemoryManager::new(&repo, &token, None);
@@ -238,6 +311,7 @@ async fn test_consolidation_lifecycle() {
             return;
         }
     };
+    run_global_setup(&token, &repo);
 
     ensure_cleanup_label(&token, &repo).await;
     let user_id = test_user("consolidation");
@@ -301,6 +375,7 @@ async fn test_working_memory_lifecycle() {
             return;
         }
     };
+    run_global_setup(&token, &repo);
 
     ensure_cleanup_label(&token, &repo).await;
     let mem = MemoryManager::new(&repo, &token, None);
@@ -355,6 +430,7 @@ async fn test_session_lifecycle() {
             return;
         }
     };
+    run_global_setup(&token, &repo);
 
     ensure_cleanup_label(&token, &repo).await;
     let mem = MemoryManager::new(&repo, &token, None);
@@ -389,6 +465,7 @@ async fn test_forget_hard_delete() {
             return;
         }
     };
+    run_global_setup(&token, &repo);
 
     ensure_cleanup_label(&token, &repo).await;
     let mem = MemoryManager::new(&repo, &token, None);
@@ -436,6 +513,7 @@ async fn test_evict_low_importance() {
             return;
         }
     };
+    run_global_setup(&token, &repo);
 
     ensure_cleanup_label(&token, &repo).await;
     let mem = MemoryManager::new(&repo, &token, None);
@@ -484,6 +562,7 @@ async fn test_recall_token_budget() {
             return;
         }
     };
+    run_global_setup(&token, &repo);
 
     ensure_cleanup_label(&token, &repo).await;
     let mem = MemoryManager::new(&repo, &token, None);
@@ -535,6 +614,7 @@ async fn test_multi_user_isolation() {
             return;
         }
     };
+    run_global_setup(&token, &repo);
 
     ensure_cleanup_label(&token, &repo).await;
     let mem = MemoryManager::new(&repo, &token, None);

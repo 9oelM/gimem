@@ -11,8 +11,12 @@
 //!    - `MEMORY_TEST_REPO` — `owner/repo` format
 //!
 //!    If either variable is absent the test prints `SKIP` and returns early.
+//!
+//! Before the first API test runs, [`run_global_setup`] closes every open
+//! issue in the test repository so each run starts from a clean slate.
 
 use std::process::Command;
+use std::sync::OnceLock;
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -28,6 +32,74 @@ fn require_env() -> Option<(String, String)> {
     let token = std::env::var("GITHUB_TOKEN").ok()?;
     let repo = std::env::var("MEMORY_TEST_REPO").ok()?;
     Some((token, repo))
+}
+
+// ---------------------------------------------------------------------------
+// Global setup: close all open issues before the first test
+// ---------------------------------------------------------------------------
+
+static GLOBAL_SETUP: OnceLock<()> = OnceLock::new();
+
+/// Ensures all open issues in the test repository are closed exactly once
+/// per test binary invocation, regardless of how many tests run in parallel.
+fn run_global_setup(token: &str, repo: &str) {
+    GLOBAL_SETUP.get_or_init(|| {
+        let token = token.to_owned();
+        let repo = repo.to_owned();
+        let handle = std::thread::spawn(move || {
+            if let Ok(rt) = tokio::runtime::Runtime::new() {
+                rt.block_on(close_all_open_issues(&token, &repo));
+            }
+        });
+        let _ = handle.join();
+    });
+}
+
+/// Closes every open issue in `repo` by paginating through the issues API.
+async fn close_all_open_issues(token: &str, repo: &str) {
+    let client = reqwest::Client::builder()
+        .user_agent("memory-store-test/0.1.0")
+        .build()
+        .expect("failed to build HTTP client");
+
+    let mut page = 1u32;
+    loop {
+        let url = format!(
+            "https://api.github.com/repos/{repo}/issues?state=open&per_page=100&page={page}"
+        );
+        let resp = client
+            .get(&url)
+            .bearer_auth(token)
+            .header("Accept", "application/vnd.github+json")
+            .header("X-GitHub-Api-Version", "2026-03-10")
+            .send()
+            .await;
+
+        let issues: Vec<serde_json::Value> = match resp {
+            Ok(r) => r.json().await.unwrap_or_default(),
+            Err(_) => break,
+        };
+
+        if issues.is_empty() {
+            break;
+        }
+
+        for issue in &issues {
+            if let Some(n) = issue["number"].as_u64() {
+                let patch_url = format!("https://api.github.com/repos/{repo}/issues/{n}");
+                let _ = client
+                    .patch(&patch_url)
+                    .bearer_auth(token)
+                    .header("Accept", "application/vnd.github+json")
+                    .header("X-GitHub-Api-Version", "2026-03-10")
+                    .json(&serde_json::json!({ "state": "closed" }))
+                    .send()
+                    .await;
+            }
+        }
+
+        page += 1;
+    }
 }
 
 /// Run `gimem` with the given args in a clean environment (no inherited
@@ -143,6 +215,7 @@ fn bootstrap_json_output() {
             return;
         }
     };
+    run_global_setup(&token, &repo);
     let user = test_user("bootstrap");
     let out = run_with_creds(&token, &repo, &user, &["bootstrap", "--json"]);
     assert!(
@@ -164,6 +237,7 @@ fn remember_json_output() {
             return;
         }
     };
+    run_global_setup(&token, &repo);
     let user = test_user("remember");
     let out = run_with_creds(
         &token,
@@ -212,6 +286,7 @@ fn set_working_and_recall_json_output() {
             return;
         }
     };
+    run_global_setup(&token, &repo);
     let user = test_user("set_working_recall");
     let out = run_with_creds(
         &token,
@@ -272,6 +347,7 @@ fn clear_working_json_output() {
             return;
         }
     };
+    run_global_setup(&token, &repo);
     let user = test_user("clear_working");
 
     // Create a working memory entry first.
@@ -302,6 +378,7 @@ fn forget_json_output() {
             return;
         }
     };
+    run_global_setup(&token, &repo);
     let user = test_user("forget");
 
     // Create an entry to forget.
@@ -358,6 +435,7 @@ fn start_and_end_session_json_output() {
             return;
         }
     };
+    run_global_setup(&token, &repo);
     let user = test_user("session");
 
     let start_out = run_with_creds(
@@ -414,6 +492,7 @@ fn consolidate_json_output() {
             return;
         }
     };
+    run_global_setup(&token, &repo);
     let user = test_user("consolidate");
 
     let out = run_with_creds(&token, &repo, &user, &["consolidate", "--json"]);
@@ -447,6 +526,7 @@ fn evict_json_output() {
             return;
         }
     };
+    run_global_setup(&token, &repo);
     let user = test_user("evict");
 
     // Dry-run.
