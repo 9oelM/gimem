@@ -47,6 +47,8 @@ pub struct MemoryManager {
     http_client: reqwest::Client,
     /// `Some((fetched_at, entries))` when the cache is valid; `None` otherwise.
     hot_cache: HotCache,
+    /// Optional LLM-backed extractor used by [`MemoryManager::extract_from_transcript`].
+    extractor: Option<crate::ExtractFn>,
 }
 
 impl MemoryManager {
@@ -96,7 +98,14 @@ impl MemoryManager {
             token: token.to_owned(),
             http_client,
             hot_cache: Arc::new(Mutex::new(None)),
+            extractor: None,
         }
+    }
+
+    /// Set the LLM extractor used by [`MemoryManager::extract_from_transcript`].
+    pub fn with_extractor(mut self, f: crate::ExtractFn) -> Self {
+        self.extractor = Some(f);
+        self
     }
 
     /// Bootstrap the repository by creating all required labels.
@@ -326,6 +335,71 @@ impl MemoryManager {
         self.consolidation.evict(user_id, dry_run).await
     }
 
+    /// Extract memories from a JSONL conversation transcript and store them.
+    ///
+    /// Each line of the file must be a JSON object with a `type` field of
+    /// `"user"` or `"assistant"` and a nested `message.content` that is either
+    /// a plain string or an array of `{"type": "text", "text": "..."}` blocks.
+    /// Lines with other `type` values are silently skipped.
+    ///
+    /// If an [`ExtractFn`](crate::ExtractFn) was registered via
+    /// [`with_extractor`](Self::with_extractor), it is called with the full
+    /// conversation text.  Otherwise a heuristic pass over user turns is used.
+    ///
+    /// Candidates that are near-duplicates of an existing memory (hybrid search
+    /// score ≥ 0.85) are skipped.  All others are stored and returned.
+    pub async fn extract_from_transcript(
+        &self,
+        transcript_path: &str,
+        user_id: &str,
+    ) -> Result<Vec<MemoryEntry>> {
+        let raw = tokio::fs::read_to_string(transcript_path)
+            .await
+            .map_err(|e| {
+                MemoryError::InvalidInput(format!(
+                    "failed to read transcript {transcript_path}: {e}"
+                ))
+            })?;
+
+        let turns = parse_transcript_lines(&raw);
+
+        let candidates: Vec<crate::ExtractedMemory> = if let Some(ref extractor) = self.extractor {
+            let full_text = turns
+                .iter()
+                .map(|(role, text)| format!("{role}: {text}"))
+                .collect::<Vec<_>>()
+                .join("\n");
+            extractor(full_text).await
+        } else {
+            heuristic_extract_lib(&turns)
+        };
+
+        let mut stored: Vec<MemoryEntry> = Vec::new();
+        for candidate in candidates {
+            let q = SearchQuery::default()
+                .with_query(&candidate.content)
+                .with_user(user_id)
+                .with_limit(5);
+            let results = self.search.hybrid_search(&q).await.unwrap_or_default();
+            if results.iter().any(|r| r.score >= 0.85) {
+                continue;
+            }
+            let entry = self
+                .remember(
+                    &candidate.content,
+                    candidate.memory_type,
+                    user_id,
+                    candidate.importance,
+                    candidate.entities,
+                    candidate.tags,
+                )
+                .await?;
+            stored.push(entry);
+        }
+
+        Ok(stored)
+    }
+
     // -----------------------------------------------------------------------
     // Private helpers
     // -----------------------------------------------------------------------
@@ -405,6 +479,130 @@ impl MemoryManager {
 
         Ok(())
     }
+}
+
+/// Parse a JSONL transcript into `(role, text)` pairs.
+///
+/// `content` may be a plain string or an array of typed content blocks;
+/// both forms are accepted.  Non-text blocks and unrecognised line types
+/// are silently skipped.
+fn parse_transcript_lines(raw: &str) -> Vec<(String, String)> {
+    let mut turns = Vec::new();
+    for line in raw.lines() {
+        let line = line.trim();
+        if line.is_empty() {
+            continue;
+        }
+        let Ok(val) = serde_json::from_str::<serde_json::Value>(line) else {
+            continue;
+        };
+        let Some(kind) = val.get("type").and_then(|v| v.as_str()) else {
+            continue;
+        };
+        if kind != "user" && kind != "assistant" {
+            continue;
+        }
+        let Some(content) = val.get("message").and_then(|m| m.get("content")) else {
+            continue;
+        };
+        let text = match content {
+            serde_json::Value::String(s) => s.clone(),
+            serde_json::Value::Array(arr) => arr
+                .iter()
+                .filter_map(|block| {
+                    if block.get("type").and_then(|t| t.as_str()) == Some("text") {
+                        block
+                            .get("text")
+                            .and_then(|t| t.as_str())
+                            .map(str::to_owned)
+                    } else {
+                        None
+                    }
+                })
+                .collect::<Vec<_>>()
+                .join(" "),
+            _ => continue,
+        };
+        if !text.is_empty() {
+            turns.push((kind.to_owned(), text));
+        }
+    }
+    turns
+}
+
+/// Heuristic extraction: scan user turns and classify by keyword patterns.
+fn heuristic_extract_lib(turns: &[(String, String)]) -> Vec<crate::ExtractedMemory> {
+    use crate::ExtractedMemory;
+    let mut out = Vec::new();
+    for (role, text) in turns {
+        if role != "user" {
+            continue;
+        }
+        let t = text.trim();
+        if t.len() < 15 || t.ends_with('?') {
+            continue;
+        }
+        let lower = t.to_lowercase();
+        let candidate = if lower.contains("prefer")
+            || lower.contains("always")
+            || lower.contains(" like ")
+            || lower.contains(" want ")
+            || lower.contains(" love ")
+            || lower.contains("never")
+            || lower.contains("don't")
+            || lower.contains("shouldn't")
+            || lower.contains("avoid")
+            || lower.contains("hate")
+        {
+            Some(ExtractedMemory {
+                content: t.to_owned(),
+                memory_type: MemoryType::Semantic,
+                importance: 0.7,
+                entities: vec![],
+                tags: vec![],
+            })
+        } else if lower.contains("we use")
+            || lower.contains("our stack")
+            || lower.contains("our repo")
+            || lower.contains("our db")
+            || lower.contains("we deploy")
+        {
+            Some(ExtractedMemory {
+                content: t.to_owned(),
+                memory_type: MemoryType::Semantic,
+                importance: 0.8,
+                entities: vec![],
+                tags: vec![],
+            })
+        } else if lower.contains("to deploy")
+            || lower.contains("to build")
+            || lower.contains("to test")
+            || lower.contains("to run")
+            || lower.contains("steps to")
+        {
+            Some(ExtractedMemory {
+                content: t.to_owned(),
+                memory_type: MemoryType::Procedural,
+                importance: 0.75,
+                entities: vec![],
+                tags: vec![],
+            })
+        } else if t.len() > 20 {
+            Some(ExtractedMemory {
+                content: t.to_owned(),
+                memory_type: MemoryType::Episodic,
+                importance: 0.4,
+                entities: vec![],
+                tags: vec![],
+            })
+        } else {
+            None
+        };
+        if let Some(c) = candidate {
+            out.push(c);
+        }
+    }
+    out
 }
 
 fn apply_patch(entry: &mut MemoryEntry, patch: MemoryPatch) {
