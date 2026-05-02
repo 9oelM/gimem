@@ -1,7 +1,6 @@
 ---
 name: gimem
-description: Store and retrieve agent memories as GitHub Issues with semantic search via the gimem CLI.
-origin: local
+description: Store and retrieve agent memories as GitHub Issues with semantic search via the gimem CLI. Anything you want the agent to remember, recall, or forget goes through this tool.
 ---
 
 # gimem — GitHub Issues Agent Memory
