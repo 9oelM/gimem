@@ -106,6 +106,43 @@ let summarize: SummarizeFn = Arc::new(|contents| Box::pin(async move {
 let mem = MemoryManager::new("owner/repo", "ghp_...", Some(summarize));
 ```
 
+## Quickstart: Claude Code Plugin
+
+Install gimem as a Claude Code plugin to get the `gimem` skill loaded automatically in every session.
+
+### Install via marketplace
+
+```bash
+claude plugin install https://github.com/9oelM/gimem
+```
+
+This copies `skills/gimem/SKILL.md` into your `~/.claude/skills/gimem/` directory. Claude Code loads it at session start, so you can invoke it with `/gimem` and Claude will follow the workflow automatically.
+
+### Add to a marketplace registry
+
+If you maintain a Claude Code marketplace (a repo with a `.claude-plugin/marketplace.json`), add gimem to the `plugins` array:
+
+```json
+{
+  "plugins": [
+    {
+      "name": "gimem",
+      "source": "https://github.com/9oelM/gimem",
+      "description": "GitHub Issues-backed persistent memory for AI agents",
+      "version": "0.1.0"
+    }
+  ]
+}
+```
+
+Then install from the marketplace:
+
+```bash
+claude plugin install gimem
+```
+
+---
+
 ## Quickstart: CLI
 
 ### Install
