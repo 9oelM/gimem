@@ -366,3 +366,70 @@ fn print_consolidation_stats(
         );
     }
 }
+
+// ---------------------------------------------------------------------------
+// Unit tests
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // --- split_csv ---
+
+    #[test]
+    fn split_csv_empty_string_returns_empty() {
+        assert!(split_csv("").is_empty());
+    }
+
+    #[test]
+    fn split_csv_single_item() {
+        assert_eq!(split_csv("rust"), vec!["rust"]);
+    }
+
+    #[test]
+    fn split_csv_multiple_items() {
+        assert_eq!(split_csv("rust,go,python"), vec!["rust", "go", "python"]);
+    }
+
+    #[test]
+    fn split_csv_trims_whitespace() {
+        assert_eq!(
+            split_csv(" rust , go , python "),
+            vec!["rust", "go", "python"]
+        );
+    }
+
+    #[test]
+    fn split_csv_filters_empty_parts_from_trailing_comma() {
+        assert_eq!(split_csv("rust,go,"), vec!["rust", "go"]);
+    }
+
+    #[test]
+    fn split_csv_filters_empty_parts_from_leading_comma() {
+        assert_eq!(split_csv(",rust,go"), vec!["rust", "go"]);
+    }
+
+    #[test]
+    fn split_csv_only_commas_returns_empty() {
+        assert!(split_csv(",,,").is_empty());
+    }
+
+    // --- require_user ---
+
+    #[test]
+    fn require_user_some_returns_the_value() {
+        let result = require_user(Some("alice".to_string()));
+        assert_eq!(result.unwrap(), "alice");
+    }
+
+    #[test]
+    fn require_user_none_returns_invalid_input_error() {
+        let err = require_user(None).unwrap_err();
+        let msg = err.to_string();
+        assert!(
+            msg.contains("GIMEM_USER"),
+            "error message should mention GIMEM_USER, got: {msg}"
+        );
+    }
+}
