@@ -72,9 +72,7 @@ impl Drop for CleanupGuard {
             rt.block_on(async move {
                 let client = test_client();
                 for n in issues {
-                    let url = format!(
-                        "https://api.github.com/repos/{repo}/issues/{n}"
-                    );
+                    let url = format!("https://api.github.com/repos/{repo}/issues/{n}");
                     let _ = client
                         .patch(&url)
                         .bearer_auth(&token)
@@ -109,9 +107,7 @@ async fn ensure_cleanup_label(token: &str, repo: &str) {
 /// Adds the `test:cleanup` label to an issue (best-effort, ignores errors).
 async fn tag_cleanup(token: &str, repo: &str, issue_number: u64) {
     let client = test_client();
-    let url = format!(
-        "https://api.github.com/repos/{repo}/issues/{issue_number}/labels"
-    );
+    let url = format!("https://api.github.com/repos/{repo}/issues/{issue_number}/labels");
     let _ = client
         .post(&url)
         .bearer_auth(token)
@@ -127,7 +123,10 @@ async fn tag_cleanup(token: &str, repo: &str, issue_number: u64) {
 // ---------------------------------------------------------------------------
 
 fn test_user(test_name: &str) -> String {
-    format!("test_{test_name}_{}", &uuid::Uuid::new_v4().to_string()[..8])
+    format!(
+        "test_{test_name}_{}",
+        &uuid::Uuid::new_v4().to_string()[..8]
+    )
 }
 
 // ---------------------------------------------------------------------------
@@ -147,7 +146,9 @@ async fn test_bootstrap_idempotent() {
 
     let mem = MemoryManager::new(&repo, &token, None);
     mem.bootstrap().await.expect("first bootstrap failed");
-    mem.bootstrap().await.expect("second bootstrap failed — not idempotent");
+    mem.bootstrap()
+        .await
+        .expect("second bootstrap failed — not idempotent");
 }
 
 /// `remember` stores a memory and `recall` returns it in the context string.
@@ -186,7 +187,11 @@ async fn test_remember_and_recall() {
     tokio::time::sleep(std::time::Duration::from_secs(5)).await;
 
     let context = mem
-        .recall("What programming language does the user prefer?", &user_id, 2000)
+        .recall(
+            "What programming language does the user prefer?",
+            &user_id,
+            2000,
+        )
         .await
         .expect("recall failed");
 
@@ -300,7 +305,9 @@ async fn test_working_memory_lifecycle() {
     println!("Context with working memory: {context_with}");
 
     // Clear working memory.
-    mem.clear_working(&user_id).await.expect("clear_working failed");
+    mem.clear_working(&user_id)
+        .await
+        .expect("clear_working failed");
 
     tokio::time::sleep(std::time::Duration::from_secs(5)).await;
 
@@ -430,18 +437,15 @@ async fn test_evict_low_importance() {
     tokio::time::sleep(std::time::Duration::from_secs(5)).await;
 
     // Dry run first — should count at least one candidate.
-    let dry_stats = mem
-        .evict(&user_id, true)
-        .await
-        .expect("dry evict failed");
+    let dry_stats = mem.evict(&user_id, true).await.expect("dry evict failed");
     println!("Dry evict stats: candidates={}", dry_stats.candidates);
 
     // Real eviction.
-    let stats = mem
-        .evict(&user_id, false)
-        .await
-        .expect("evict failed");
-    println!("Evict stats: evicted={}, candidates={}", stats.evicted, stats.candidates);
+    let stats = mem.evict(&user_id, false).await.expect("evict failed");
+    println!(
+        "Evict stats: evicted={}, candidates={}",
+        stats.evicted, stats.candidates
+    );
 }
 
 /// `recall` with a tight token budget returns output whose estimated token
