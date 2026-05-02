@@ -34,7 +34,7 @@ fn require_env() -> Option<(String, String)> {
 
 static GLOBAL_SETUP: OnceLock<()> = OnceLock::new();
 
-/// Ensures all open issues in the test repository are closed exactly once
+/// Ensures all issues in the test repository are hard-deleted exactly once
 /// per test binary invocation, regardless of how many tests run in parallel.
 fn run_global_setup(token: &str, repo: &str) {
     GLOBAL_SETUP.get_or_init(|| {
@@ -44,21 +44,22 @@ fn run_global_setup(token: &str, repo: &str) {
         // without conflicting with the #[tokio::test] runtime.
         let handle = std::thread::spawn(move || {
             if let Ok(rt) = tokio::runtime::Runtime::new() {
-                rt.block_on(close_all_open_issues(&token, &repo));
+                rt.block_on(delete_all_issues(&token, &repo));
             }
         });
         let _ = handle.join();
     });
 }
 
-/// Closes every open issue in `repo` by paginating through the issues API.
-async fn close_all_open_issues(token: &str, repo: &str) {
+/// Hard-deletes every issue in `repo` (open and closed) via the GraphQL
+/// `deleteIssue` mutation, paginating until none remain.
+async fn delete_all_issues(token: &str, repo: &str) {
     let client = test_client();
-    let mut page = 1u32;
     loop {
-        let url = format!(
-            "https://api.github.com/repos/{repo}/issues?state=open&per_page=100&page={page}"
-        );
+        // Fetch one page of all issues (open + closed). The list response
+        // includes `node_id`, which is required for the GraphQL mutation.
+        let url =
+            format!("https://api.github.com/repos/{repo}/issues?state=all&per_page=100&page=1");
         let resp = client
             .get(&url)
             .bearer_auth(token)
@@ -77,20 +78,25 @@ async fn close_all_open_issues(token: &str, repo: &str) {
         }
 
         for issue in &issues {
-            if let Some(n) = issue["number"].as_u64() {
-                let patch_url = format!("https://api.github.com/repos/{repo}/issues/{n}");
+            if let Some(node_id) = issue["node_id"].as_str() {
+                let mutation = r#"
+                    mutation DeleteIssue($issueId: ID!) {
+                        deleteIssue(input: { issueId: $issueId }) {
+                            repository { nameWithOwner }
+                        }
+                    }
+                "#;
                 let _ = client
-                    .patch(&patch_url)
+                    .post("https://api.github.com/graphql")
                     .bearer_auth(token)
-                    .header("Accept", "application/vnd.github+json")
-                    .header("X-GitHub-Api-Version", "2026-03-10")
-                    .json(&serde_json::json!({ "state": "closed" }))
+                    .json(&serde_json::json!({
+                        "query": mutation,
+                        "variables": { "issueId": node_id },
+                    }))
                     .send()
                     .await;
             }
         }
-
-        page += 1;
     }
 }
 
