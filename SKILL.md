@@ -43,6 +43,35 @@ Run once per repository to create the required labels:
 gimem bootstrap
 ```
 
+### Automatic Extraction (Stop Hook)
+
+Configure Claude Code to automatically extract memories at the end of every session. Add to `~/.claude/settings.json`:
+
+```json
+{
+  "hooks": {
+    "Stop": [
+      {
+        "command": "gimem extract-from-transcript \"$CLAUDE_TRANSCRIPT_PATH\" --user \"$GIMEM_USER\""
+      }
+    ]
+  }
+}
+```
+
+This runs `gimem extract-from-transcript` on the session JSONL log when Claude Code exits, capturing anything the agent missed during the conversation. The command is a no-op if `GIMEM_USER` or `GITHUB_TOKEN` is unset.
+
+For LLM-powered extraction (higher recall), set `GIMEM_EXTRACTOR` to a shell command that reads conversation text from stdin and writes a JSON array of memories to stdout:
+
+```bash
+export GIMEM_EXTRACTOR="python3 ~/my-extractor.py"
+```
+
+The extractor receives `ROLE: text` lines on stdin and must output:
+```json
+[{"content": "...", "type": "semantic", "importance": 0.8}]
+```
+
 ## Core Agent Workflow
 
 ### 1. Start of Conversation — Recall Relevant Context
@@ -67,7 +96,7 @@ gimem remember "User prefers functional React components with explicit return ty
 gimem remember "Deploy: run pnpm build, then rsync dist/ to /var/www/app, then systemctl restart nginx" --type procedural
 ```
 
-Store memories immediately after learning something important — do not batch at end of session.
+Store memories immediately after learning something important -- do not batch at end of session. See [When to Remember](#when-to-remember) for specific trigger signals.
 
 ### 3. Track the Current Task — Working Memory
 
@@ -83,17 +112,19 @@ Clear (archive) working memory when the task is done:
 gimem clear-working
 ```
 
-### 4. Session Lifecycle
+### 4. End of Conversation -- Consolidate
 
-Start a session to get a session ID, then close it to consolidate episodic memories into semantic ones:
+Close the session to consolidate episodic memories into semantic ones:
 
 ```bash
 SESSION=$(gimem start-session "Refactoring auth module to support SSO" --json | jq -r '.session_id')
 
-# ... do work, store episodic memories ...
+# ... do work, store episodic memories with gimem remember ...
 
 gimem end-session "$SESSION"
 ```
+
+Alternatively, configure the Stop hook (see [Automatic Extraction (Stop Hook)](#automatic-extraction-stop-hook)) to let `gimem extract-from-transcript` handle end-of-session extraction automatically when Claude Code exits.
 
 Run `consolidate` manually to batch-promote old episodic memories without a full session close:
 
@@ -115,6 +146,7 @@ gimem consolidate
 | `gimem end-session <session-id>` | Consolidate episodic memories and close session |
 | `gimem consolidate` | Batch-promote episodic → semantic memories |
 | `gimem evict [--dry-run]` | Archive low-retention memories to reduce noise |
+| `gimem extract-from-transcript <path>` | Extract and store memories from a Claude Code session transcript |
 
 ### Global Flags
 
@@ -186,10 +218,15 @@ Add `--json` to any command for machine-readable output suitable for tool-use pa
 
 ### When to Remember
 
-- User states a preference, constraint, or decision explicitly ("I want…", "we use…", "don't do…")
-- A non-obvious fact is established that will apply to future sessions
-- A procedure is agreed upon and should be reused (deployment steps, test commands, review checklists)
-- An important event occurs mid-session that should survive beyond the context window
+Call `gimem remember` immediately when you observe any of these signals in the conversation:
+
+- User corrects you ("no, we use X not Y", "actually it's", "that's wrong")
+- User states a preference ("I prefer", "I always", "I like", "I want", "I love", "I hate")
+- User issues a standing constraint ("never", "don't", "always avoid", "we don't do that")
+- User reveals stack or tooling ("we use X", "our repo is", "our DB is", "we deploy to")
+- A non-obvious convention is established (naming, structure, file layout, process)
+- A procedure is agreed upon that should be repeatable (deploy steps, test commands, review checklists)
+- User confirms a decision ("yes, go with X", "let's use X", "stick with X")
 
 ### Chaining Commands
 
