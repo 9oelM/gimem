@@ -288,7 +288,7 @@ impl SearchEngine {
             .get("https://api.github.com/search/issues")
             .bearer_auth(&self.token)
             .header("Accept", "application/vnd.github+json")
-            .header("X-GitHub-Api-Version", "2022-11-28")
+            .header("X-GitHub-Api-Version", "2026-03-10")
             .query(&params)
             .send()
             .await?;
@@ -338,6 +338,7 @@ impl SearchEngine {
         let mut parts: Vec<String> = Vec::new();
 
         parts.push(format!("repo:{repo}"));
+        parts.push("is:issue".to_owned());
 
         if !q.include_archived {
             parts.push("state:open".to_owned());

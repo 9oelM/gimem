@@ -79,7 +79,7 @@ impl GitHubIssuesStore {
         );
         headers.insert(
             "X-GitHub-Api-Version",
-            HeaderValue::from_static("2022-11-28"),
+            HeaderValue::from_static("2026-03-10"),
         );
         headers.insert(
             header::USER_AGENT,

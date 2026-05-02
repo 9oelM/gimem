@@ -287,7 +287,7 @@ impl MemoryManager {
             .post(&url)
             .bearer_auth(&self.token)
             .header("Accept", "application/vnd.github+json")
-            .header("X-GitHub-Api-Version", "2022-11-28")
+            .header("X-GitHub-Api-Version", "2026-03-10")
             .json(&serde_json::json!({
                 "title": format!("sess_{session_id}"),
                 "description": description,
@@ -374,7 +374,7 @@ impl MemoryManager {
             .get(&list_url)
             .bearer_auth(&self.token)
             .header("Accept", "application/vnd.github+json")
-            .header("X-GitHub-Api-Version", "2022-11-28")
+            .header("X-GitHub-Api-Version", "2026-03-10")
             .query(&[("state", "open"), ("per_page", "100")])
             .send()
             .await?;
@@ -397,7 +397,7 @@ impl MemoryManager {
                 ))
                 .bearer_auth(&self.token)
                 .header("Accept", "application/vnd.github+json")
-                .header("X-GitHub-Api-Version", "2022-11-28")
+                .header("X-GitHub-Api-Version", "2026-03-10")
                 .json(&serde_json::json!({ "state": "closed" }))
                 .send()
                 .await?;
