@@ -20,6 +20,8 @@
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+type HotCache = Arc<Mutex<Option<(Instant, Vec<MemoryEntry>)>>>;
+
 use tokio::sync::Mutex;
 
 use crate::consolidation::{
@@ -44,7 +46,7 @@ pub struct MemoryManager {
     /// Shared HTTP client for milestone operations (start/end session).
     http_client: reqwest::Client,
     /// `Some((fetched_at, entries))` when the cache is valid; `None` otherwise.
-    hot_cache: Arc<Mutex<Option<(Instant, Vec<MemoryEntry>)>>>,
+    hot_cache: HotCache,
 }
 
 impl MemoryManager {
@@ -151,10 +153,7 @@ impl MemoryManager {
             hot_entries.iter().map(|e| (e.clone(), 2.0_f32)).collect();
 
         for sr in &search_results {
-            let is_dup = sr
-                .entry
-                .issue_number
-                .map_or(false, |n| hot_ids.contains(&n));
+            let is_dup = sr.entry.issue_number.is_some_and(|n| hot_ids.contains(&n));
             if !is_dup {
                 combined.push((sr.entry.clone(), sr.score));
             }
@@ -392,7 +391,7 @@ impl MemoryManager {
 
         if let Some(n) = number {
             self.http_client
-                .patch(&format!(
+                .patch(format!(
                     "https://api.github.com/repos/{}/milestones/{}",
                     self.repo, n
                 ))
@@ -536,7 +535,7 @@ mod tests {
         let hot_entry = make_entry_with_number(issue_num, "hot entry", MemoryType::Working);
         let search_entry = make_entry_with_number(issue_num, "search entry", MemoryType::Working);
 
-        let hot_entries = vec![hot_entry.clone()];
+        let hot_entries = [hot_entry.clone()];
         let search_results = vec![SearchResult {
             entry: search_entry,
             score: 0.9,
@@ -550,10 +549,7 @@ mod tests {
             hot_entries.iter().map(|e| (e.clone(), 2.0_f32)).collect();
 
         for sr in &search_results {
-            let is_dup = sr
-                .entry
-                .issue_number
-                .map_or(false, |n| hot_ids.contains(&n));
+            let is_dup = sr.entry.issue_number.is_some_and(|n| hot_ids.contains(&n));
             if !is_dup {
                 combined.push((sr.entry.clone(), sr.score));
             }
