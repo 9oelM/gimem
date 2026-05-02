@@ -322,104 +322,160 @@ async fn run(
             dry_run,
         } => {
             let user_id = require_user(user)?;
+            let path_str = path.to_string_lossy();
 
-            let raw = std::fs::read_to_string(&path).map_err(|e| {
-                MemoryError::InvalidInput(format!(
-                    "failed to read transcript {}: {e}",
-                    path.display()
-                ))
-            })?;
-
-            let turns = parse_transcript(&raw);
-
-            let candidates = if let Some(script) = extractor_script {
-                // Format conversation for the extractor script.
+            // When a shell extractor script is provided, parse locally so we
+            // can pipe the formatted text to it.  Otherwise delegate entirely
+            // to `MemoryManager::extract_from_transcript`, which owns the
+            // heuristic logic and dedup.
+            if let Some(script) = extractor_script {
+                let raw = tokio::fs::read_to_string(&path).await.map_err(|e| {
+                    MemoryError::InvalidInput(format!("failed to read transcript {path_str}: {e}"))
+                })?;
+                let turns = parse_transcript(&raw);
                 let formatted: String = turns
                     .iter()
                     .map(|(role, text)| format!("{}: {}\n", role.to_uppercase(), text))
                     .collect();
-                run_extractor_script(&script, &formatted).unwrap_or_default()
-            } else {
-                heuristic_extract(&turns)
-            };
+                let candidates = run_extractor_script(&script, &formatted).unwrap_or_default();
 
-            let total_candidates = candidates.len();
-            let mut stored: Vec<serde_json::Value> = Vec::new();
-            let mut skipped: usize = 0;
+                let total_candidates = candidates.len();
+                let mut stored: Vec<serde_json::Value> = Vec::new();
+                let mut skipped: usize = 0;
 
-            for candidate in candidates {
-                let existing = mgr.recall(&candidate.content, &user_id, 500).await?;
-                if !existing.is_empty() && existing.contains(candidate.content.as_str()) {
+                for candidate in candidates {
+                    let existing = mgr.recall(&candidate.content, &user_id, 500).await?;
+                    if !existing.is_empty() && existing.contains(candidate.content.as_str()) {
+                        if !json {
+                            println!(
+                                "  [{}] Skipped (duplicate): {}",
+                                candidate.memory_type, candidate.content
+                            );
+                        }
+                        skipped += 1;
+                        continue;
+                    }
+                    let memory_type: MemoryType = candidate
+                        .memory_type
+                        .parse()
+                        .unwrap_or(MemoryType::Episodic);
                     if !json {
                         println!(
-                            "  [{}] Skipped (duplicate): {}",
-                            candidate.memory_type, candidate.content
+                            "  [{}] {} (importance: {})",
+                            candidate.memory_type, candidate.content, candidate.importance
                         );
                     }
-                    skipped += 1;
-                    continue;
+                    if dry_run {
+                        stored.push(serde_json::json!({
+                            "content": candidate.content,
+                            "memory_type": candidate.memory_type,
+                            "importance": candidate.importance,
+                            "dry_run": true,
+                        }));
+                    } else {
+                        let entry = mgr
+                            .remember(
+                                &candidate.content,
+                                memory_type,
+                                &user_id,
+                                candidate.importance,
+                                vec![],
+                                vec![],
+                            )
+                            .await?;
+                        stored.push(serde_json::json!({
+                            "issue_number": entry.issue_number,
+                            "content": candidate.content,
+                            "memory_type": candidate.memory_type,
+                            "importance": candidate.importance,
+                        }));
+                    }
                 }
 
-                let memory_type: MemoryType = candidate
-                    .memory_type
-                    .parse()
-                    .unwrap_or(MemoryType::Episodic);
-
-                if !json {
+                if json {
                     println!(
-                        "  [{}] {} (importance: {})",
-                        candidate.memory_type, candidate.content, candidate.importance
+                        "{}",
+                        serde_json::json!({
+                            "stored": stored,
+                            "skipped": skipped,
+                            "total_candidates": total_candidates,
+                            "dry_run": dry_run,
+                        })
+                    );
+                } else {
+                    let action = if dry_run {
+                        "Would extract"
+                    } else {
+                        "Extracted"
+                    };
+                    println!(
+                        "{action} {} memories from transcript.",
+                        total_candidates - skipped
                     );
                 }
-
-                if dry_run {
-                    stored.push(serde_json::json!({
-                        "content": candidate.content,
-                        "memory_type": candidate.memory_type,
-                        "importance": candidate.importance,
-                        "dry_run": true,
-                    }));
+            } else if dry_run {
+                // Dry-run without a script: show candidates without storing.
+                let raw = tokio::fs::read_to_string(&path).await.map_err(|e| {
+                    MemoryError::InvalidInput(format!("failed to read transcript {path_str}: {e}"))
+                })?;
+                let candidates = heuristic_extract(&parse_transcript(&raw));
+                if json {
+                    let items: Vec<_> = candidates
+                        .iter()
+                        .map(|c| {
+                            serde_json::json!({
+                                "content": c.content,
+                                "memory_type": c.memory_type,
+                                "importance": c.importance,
+                                "dry_run": true,
+                            })
+                        })
+                        .collect();
+                    println!(
+                        "{}",
+                        serde_json::json!({
+                            "stored": items,
+                            "skipped": 0,
+                            "total_candidates": candidates.len(),
+                            "dry_run": true,
+                        })
+                    );
                 } else {
-                    let entry = mgr
-                        .remember(
-                            &candidate.content,
-                            memory_type,
-                            &user_id,
-                            candidate.importance,
-                            vec![],
-                            vec![],
-                        )
-                        .await?;
-
-                    stored.push(serde_json::json!({
-                        "issue_number": entry.issue_number,
-                        "content": candidate.content,
-                        "memory_type": candidate.memory_type,
-                        "importance": candidate.importance,
-                    }));
+                    for c in &candidates {
+                        println!(
+                            "  [{}] {} (importance: {})",
+                            c.memory_type, c.content, c.importance
+                        );
+                    }
+                    println!(
+                        "Would extract {} memories from transcript.",
+                        candidates.len()
+                    );
                 }
-            }
-
-            if json {
-                println!(
-                    "{}",
-                    serde_json::json!({
-                        "stored": stored,
-                        "skipped": skipped,
-                        "total_candidates": total_candidates,
-                        "dry_run": dry_run,
-                    })
-                );
             } else {
-                let action = if dry_run {
-                    "Would extract"
+                // Normal path: delegate to MemoryManager (heuristics + dedup + store).
+                let entries = mgr.extract_from_transcript(&path_str, &user_id).await?;
+                if json {
+                    let items: Vec<_> = entries
+                        .iter()
+                        .map(|e| {
+                            serde_json::json!({
+                                "issue_number": e.issue_number,
+                                "content": e.content,
+                                "memory_type": e.memory_type.to_string(),
+                            })
+                        })
+                        .collect();
+                    println!(
+                        "{}",
+                        serde_json::json!({ "stored": items, "dry_run": false })
+                    );
                 } else {
-                    "Extracted"
-                };
-                println!(
-                    "{action} {} memories from transcript.",
-                    total_candidates - skipped
-                );
+                    for e in &entries {
+                        println!("  [{}] {}", e.memory_type, e.content);
+                    }
+                    println!("Extracted {} memories from transcript.", entries.len());
+                }
             }
         }
     }
