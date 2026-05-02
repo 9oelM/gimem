@@ -1,0 +1,39 @@
+{
+  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+  "name": "gimem",
+  "description": "GitHub Issues-backed persistent memory for AI agents with semantic search",
+  "owner": {
+    "name": "9oelM",
+    "url": "https://github.com/9oelM"
+  },
+  "plugins": [
+    {
+      "name": "gimem",
+      "source": "./",
+      "description": "Store and retrieve agent memories as GitHub Issues with semantic search. Supports episodic, semantic, procedural, and working memory types with automatic dedup and LLM extraction.",
+      "version": "0.1.0",
+      "author": {
+        "name": "9oelM",
+        "url": "https://github.com/9oelM"
+      },
+      "homepage": "https://github.com/9oelM/gimem",
+      "repository": "https://github.com/9oelM/gimem",
+      "license": "MIT",
+      "keywords": [
+        "memory",
+        "agent-memory",
+        "github-issues",
+        "semantic-search",
+        "gimem"
+      ],
+      "category": "workflow",
+      "tags": [
+        "memory",
+        "agent-memory",
+        "github-issues",
+        "semantic-search"
+      ],
+      "strict": false
+    }
+  ]
+}
