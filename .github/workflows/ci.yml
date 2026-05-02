@@ -61,7 +61,6 @@ jobs:
   integration:
     name: Integration Tests
     runs-on: ubuntu-latest
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     needs: [check, test]
     steps:
       - uses: actions/checkout@v4
